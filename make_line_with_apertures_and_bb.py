@@ -1,7 +1,7 @@
 import argparse
 import json
 import re
-import pandas as pd
+import numpy as np
 
 import xtrack as xt
 from xfields.config_tools.beambeam_config_tools import config_tools as bb_tools
@@ -116,6 +116,18 @@ BUNCH_SPACING_BUCKETS = 10
 HARMONIC_NUMBER = 35640
 # Collimator placeholders (drifts) that beam-beam lenses must not be installed into
 COLLIMATOR_PLACEHOLDERS = "(tc|td).*"
+# Minimum distance in m of the beam-beam lenses from the placeholder edges, as
+# xcoll removes elements sitting at the edges when installing the collimators
+COLLIMATOR_MARGIN = 1e-3
+# Aperture model, only available on the hl19 branch for now
+APERTURE_URL = "https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/hl19/aperture/aperture.json"
+# Spacing in m of the regular grid of aperture limits (on top of the ones at
+# the aperture transitions and around the elements). Sets how well the aperture
+# interpolated between the limits (in loss map refinement and plots) follows
+# the model: 5 m gives a p99 error of ~0.08 mm, below the polygon discretisation
+APERTURE_STEP = 5.0
+# LHCb VELO apertures (not in the aperture model), in m from IP8 along beam 1
+VELO_S_FROM_IP8 = {"velo.a_aper": -0.8, "velo.b_aper": -0.4, "velo.c_aper": -0.2, "velo.d_aper": 0.4}
 
 
 def check_aperture(line):
@@ -240,9 +252,11 @@ def collimator_table(line):
 
 
 def collimator_at(tt, s):
-    # Collimator placeholder drift strictly containing s, as (name, s_start, s_end)
+    # Collimator placeholder drift containing s, or closer than COLLIMATOR_MARGIN/2
+    # to its edges (half, so that lenses moved to COLLIMATOR_MARGIN outside the
+    # edges are safely clear of it), as (name, s_start, s_end)
     for name, s0, s1 in zip(tt.name, tt.s_start, tt.s_end):
-        if s0 < s < s1:
+        if s0 - COLLIMATOR_MARGIN / 2 < s < s1 + COLLIMATOR_MARGIN / 2:
             return name, s0, s1
     return None
 
@@ -250,7 +264,7 @@ def collimator_at(tt, s):
 def move_lenses_out_of_collimators(env, bb_dfs):
     # Long-range lenses falling inside a collimator placeholder would slice it,
     # so that the collimator can no longer be installed (e.g. with xcoll).
-    # Such lenses are moved to the closest edge of the placeholder. Both
+    # Such lenses are moved to just outside the closest edge of the placeholder. Both
     # partner lenses are moved by the same amount, so that they stay at the
     # same physical location. atPosition is w.r.t. the IP, along b1 for the b1
     # line and along b4 (opposite sign) for the b2 line.
@@ -277,9 +291,10 @@ def move_lenses_out_of_collimators(env, bb_dfs):
         if not found:
             continue
 
-        # Candidate positions: edges of the clashing placeholders, closest first
+        # Candidate positions: just outside the edges of the clashing placeholders, closest first
         candidates = sorted({sign[nn] * (s_edge - s_ip[nn][ip])
-                             for nn, (_, s0, s1) in found for s_edge in (s0, s1)},
+                             for nn, (_, s0, s1) in found
+                             for s_edge in (s0 - COLLIMATOR_MARGIN, s1 + COLLIMATOR_MARGIN)},
                             key=lambda dd: abs(dd - d))
         d_new = next((dd for dd in candidates if not clashes(dd)), None)
         if d_new is None:
@@ -359,79 +374,61 @@ def install_beam_beam(env, ip_names, intensity, filling, bunch_b1, bunch_b2):
     )
 
 
-def install_apertures(env, line, beam, betastar):
-    line_table = line.get_table().to_pandas()
-    line_table = line_table.drop(line_table.index[(line_table["element_type"].str.contains("Drift", na=False)) | (line_table["element_type"].str.contains("Limit", na=False)) | (line_table.element_type == "Marker") | (line_table.element_type == "")])
+def load_aperture_model(acc_models_tag):
+    # The aperture model is defined on the thick lattice (pipes are placed
+    # w.r.t. thick element names), so it is always built on the thick lattice,
+    # also when the thin one is used: s is the same in both
+    aperture_env = xt.load(f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/xsuite/lhc.json")
+    aperture_env.aperture.from_json(APERTURE_URL, timeout=60)
+    print("Loaded aperture model:", APERTURE_URL)
+    return aperture_env
 
-    aperture_line = xt.load(f"hllhc_b{beam}_apertures.json")
-    apertures = aperture_line.element_dict
-    aper_table = aperture_line.get_table().to_pandas()
-    aper_table = aper_table.drop(aper_table.index[(aper_table.element_type == "Drift") | (aper_table.element_type == "")])
 
-    tt = line_table.copy()
-    tt["_row_order"] = range(len(tt))
-    aper_table_for_merge = (
-        aper_table[["s", "name"]]
-        .rename(columns={
-            "s": "s_aper",
-            "name": "name_closest_aper",
-        })
-        .sort_values("s_aper")
-    )
+def install_apertures(env, line, beam, betastar, aperture):
+    tt = line.get_table()
 
-    tt_master = pd.merge_asof(
-        tt.sort_values("s"),
-        aper_table_for_merge,
-        left_on="s",
-        right_on="s_aper",
-        direction="nearest",
-    )
-    tt_master = (
-        tt_master
-        .sort_values("_row_order")
-        .drop(columns=["_row_order", "s_aper"])
-    )
+    # Limits directly upstream and downstream of all elements other than drifts
+    # and markers, and of the collimator placeholders (used by xcoll when
+    # installing the collimators). For thin elements the downstream limit is a
+    # replica of the upstream one, except for collimators as xcoll needs actual
+    # limit elements.
+    need = tt.rows.match_not("|Marker|Limit.*|.*Drift.*", col="element_type")
+    colls = collimator_table(line)
+    need_names = np.concatenate([need.name, colls.name])
+    s_start = np.concatenate([need.s_start, colls.s_start])
+    s_end = np.concatenate([need.s_end, colls.s_end])
+
+    # Sampling for the loss location granularity: around the aperture transitions
+    # and on a regular grid, only inside drifts that are not collimator placeholders
+    s_grid = aperture.get_s_around_transitions(resolution=APERTURE_STEP)
+    drifts = tt.rows.match(".*Drift.*", col="element_type")
+    drifts = drifts.rows[~np.isin(drifts.name, colls.name)]
+    ii = np.searchsorted(drifts.s_start, s_grid, side="right") - 1
+    s_grid = s_grid[(ii >= 0) & (s_grid > drifts.s_start[ii] + aperture.s_tol)
+                    & (s_grid < drifts.s_end[ii] - aperture.s_tol)]
+
+    limits = aperture.get_limit_elements_at_s(np.unique(np.concatenate([s_start, s_end, s_grid])))
 
     apers_to_insert_at_name = []
-    apers_to_insert_at_s = []
-    for name, s_ele, aper_name in zip(tt_master.name, tt_master.s, tt_master.name_closest_aper):
-        env.elements[f"{name}_aper_up"] = apertures[aper_name]
-        env.elements[f"{name}_aper_do"] = apertures[aper_name]
+    for name, s0, s1 in zip(need_names, s_start, s_end):
+        env.elements[f"{name}_aper_up"] = limits[s0]
+        if s1 == s0 and name not in colls.name:
+            env.new(f"{name}_aper_do", "Replica", parent_name=f"{name}_aper_up")
+        else:
+            env.elements[f"{name}_aper_do"] = limits[s1]
         apers_to_insert_at_name.append(env.place(f"{name}_aper_up", at=0, from_=f"{name}@start"))
         apers_to_insert_at_name.append(env.place(f"{name}_aper_do", at=0, from_=f"{name}@end"))
 
-    tt_full = line.get_table()
-    for name, s in zip(aper_table.name, aper_table.s):
-        if name.startswith("tc") or name.startswith("td"):
-            coll_a = '.'.join(re.split(r"\.|_aper", name)[:2])
-            coll_b = coll_a + f".b{beam}"
-            if coll_a in line.element_names:
-                coll = coll_a
-            elif coll_b in line.element_names:
-                coll = coll_b
-            else:
-                env.elements[name] = apertures[name]
-                apers_to_insert_at_name.append(env.place(name, at=s))
-                continue
-            s_coll = tt_full.rows[coll].s_start[0]
-            delta = s - s_coll
-            l_coll = line[coll].length
-            env.elements[name] = apertures[name]
-            if delta <= l_coll / 2: # aperture upstream of collimator or inside closer to entry
-                apers_to_insert_at_name.append(env.place(name, at=0, from_=f"{coll}@start"))
-            else: # aperture inside collimator closer to exit or downstream
-                apers_to_insert_at_name.append(env.place(name, at=0, from_=f"{coll}@end"))
-        else:
-            env.elements[name] = apertures[name]
-            apers_to_insert_at_s.append(env.place(name, at=s))
+    apers_to_insert_at_s = []
+    for ii, s in enumerate(s_grid):
+        env.elements[f"aper.{ii}"] = limits[s]
+        apers_to_insert_at_s.append(env.place(f"aper.{ii}", at=s))
 
-    missaper = xt.LimitRect(min_x=-0.1, max_x=0.1, min_y=-0.1, max_y=0.1)
-    if int(beam) == 1:
-        env.elements["tcld.a11r2.b1_aper"] = missaper
-        apers_to_insert_at_name.append(env.place("tcld.a11r2.b1_aper", at=0, from_="tcld.a11r2.b1@start"))
-    else:
-        env.elements["tcld.a11l2.b2_aper"] = missaper
-        apers_to_insert_at_name.append(env.place("tcld.a11l2.b2_aper", at=0, from_="tcld.a11l2.b2@start"))
+    # The LHCb VELO is not in the aperture model
+    sign = 1 if int(beam) == 1 else -1
+    for velo, ds in VELO_S_FROM_IP8.items():
+        env.elements[velo] = xt.LimitEllipse(a=0.0029, b=0.0029)
+        apers_to_insert_at_s.append(env.place(velo, at=tt["s", "ip8"] + sign * ds))
 
     line.insert(apers_to_insert_at_name, s_tol=1e-6)
     line.insert(apers_to_insert_at_s, s_tol=1e-6)
@@ -450,18 +447,6 @@ def install_apertures(env, line, beam, betastar):
         line.element_refs[velo].b = env.vars["velo_aper_b"]
         line.element_refs[velo].shift_x = env.vars["velo_shift_x"]
         line.element_refs[velo].shift_y = env.vars["velo_shift_y"]
-
-    # Close remaining gaps (e.g. around beam-beam lenses) with the closest apertures
-    elements_in_need, aper_up_to_insert, aper_do_to_insert = check_aperture(line)
-
-    final_apers_to_insert_at_name = []
-    for name, up, do in zip(elements_in_need, aper_up_to_insert, aper_do_to_insert):
-        env.elements[f"{name}_aper_up"] = env.get(up).copy()
-        env.elements[f"{name}_aper_do"] = env.get(do).copy()
-        final_apers_to_insert_at_name.append(env.place(f"{name}_aper_up", at=0, from_=f"{name}@start"))
-        final_apers_to_insert_at_name.append(env.place(f"{name}_aper_do", at=0, from_=f"{name}@end"))
-
-    line.insert(final_apers_to_insert_at_name, s_tol=1e-6)
 
     _ = check_aperture(line)
 
@@ -529,6 +514,8 @@ def main():
     print("Loaded line:", json_url)
     print("Loaded optics:", optics_url)
 
+    aperture_env = load_aperture_model(acc_models_tag)
+
     # Octupoles first: the orbit bumps through them give a tune shift from
     # feed-down, which is compensated by the tune/chromaticity trim below
     lhc["i_mo.b1"] = args.i_mo
@@ -579,7 +566,7 @@ def main():
             print_twiss(line, f"Beam{beam} with beam-beam in {', '.join(ip_names)} "
                               f"(bunch b1={bunch_b1}, b2={bunch_b2}, intensity={args.intensity:.3g}):")
 
-        install_apertures(env, line, beam, betastar)
+        install_apertures(env, line, beam, betastar, aperture_env[f"b{beam}"].aperture)
         print_twiss(line, f"Beam{beam} with {'beam-beam and ' if with_bb else ''}apertures:")
 
         imo = line[f"i_mo.b{beam}"]
