@@ -123,6 +123,9 @@ NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE = {"ip1": 25, "ip2": 18, "ip5": 25, "ip8": 18
 DELAY_AT_IPS_SLOTS = {"ip1": 0, "ip2": 891, "ip5": 0, "ip8": 2670}
 BUNCH_SPACING_BUCKETS = 10
 HARMONIC_NUMBER = 35640
+# Keep the closed orbit change from the beam-beam kicks (weak-strong: the
+# other beam stays on its orbit without beam-beam). xfields removes it by default.
+BB_ORBIT_EFFECT = True
 # Collimator placeholders (drifts) that beam-beam lenses must not be installed into
 COLLIMATOR_PLACEHOLDERS = "(tc|td).*"
 # Minimum distance in m of the beam-beam lenses from the placeholder edges, as
@@ -306,6 +309,17 @@ def install_beam_beam(env, ip_names, intensity, filling, bunch_b1, bunch_b2):
         i_bunch_cw=bunch_b1,
         i_bunch_acw=bunch_b2,
     )
+
+    # configure_beambeam_interactions stores the kick of each lens on the closed
+    # orbit without beam-beam in post_subtract_*, which the lens subtracts from
+    # every particle, so that beam-beam leaves the closed orbit unchanged.
+    # Setting them to zero restores the orbit effect.
+    if BB_ORBIT_EFFECT:
+        for ll in [env.b1, env.b2]:
+            for name in ll.get_table().rows.match("BeamBeam.*", col="element_type").name:
+                for kk in ["x", "px", "y", "py", "zeta", "pzeta"]:
+                    if hasattr(ll[name], f"post_subtract_{kk}"):
+                        setattr(ll[name], f"post_subtract_{kk}", 0)
 
 
 def load_aperture_model(acc_models_tag):
