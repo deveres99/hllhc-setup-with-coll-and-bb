@@ -79,18 +79,6 @@ parser.add_argument(
     default="1258",
     help="IPs with beam-beam, as a string of IP numbers in any order, e.g. 1258 or 15 (default: 1258)"
 )
-parser.add_argument(
-    "--sep2_sigma",
-    type=float,
-    default=0.0,
-    help="half separation in IP2 in sigma"
-)
-parser.add_argument(
-    "--sep8_sigma",
-    type=float,
-    default=0.0,
-    help="half separation in IP8 in sigma"
-)
 
 # Machine settings, used with and without beam-beam. Tunes and chromaticities
 # are matched with the octupoles on, before installing beam-beam.
