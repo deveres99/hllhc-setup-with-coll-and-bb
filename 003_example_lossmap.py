@@ -26,8 +26,10 @@ def track_lm(line_path, colldb_path, beam, plane, num_turns, num_particles):
     colldb = xc.CollimatorDatabase.from_yaml(colldb_path, beam=beam)
     colldb.install_everest_collimators(line=line, verbose=True)
 
+    line["beambeam_scale"] = 0.0
     tw = line.twiss()
     line.xcoll.collimators.assign_optics(twiss=tw)
+    line["beambeam_scale"] = 1.0
 
     tcp  = f"tcp.{'c' if plane=='H' else 'd'}6{'l' if f'{beam}'=='1' else 'r'}7.b{beam}"
     part = line[tcp].generate_pencil(num_particles)
