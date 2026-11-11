@@ -385,22 +385,20 @@ def install_apertures(env, line, beam, betastar, aperture):
     _ = check_aperture(line)
 
 
-def trim_tune_and_chroma(env, beam, qx, qy, chroma_x, chroma_y,
-                         tol_q=1e-5, tol_dq=1e-2, max_iter=10):
-    # dq[x,y].b[1,2] and dqp[x,y].b[1,2] are deltas on top of the current tunes
-    # and chromaticities. Iterate, as tune and chromaticity are coupled e.g. by
-    # the octupole feed-down from the orbit bumps.
-    for _ in range(max_iter):
-        tw = env[f"b{beam}"].twiss()
-        delta = {f"dqx.b{beam}": qx - tw.qx, f"dqy.b{beam}": qy - tw.qy,
-                 f"dqpx.b{beam}": chroma_x - tw.dqx, f"dqpy.b{beam}": chroma_y - tw.dqy}
-        if all(abs(vv) < (tol_dq if kk.startswith("dqp") else tol_q)
-               for kk, vv in delta.items()):
-            return
-        for kk, vv in delta.items():
-            env[kk] += vv
-    print(f"WARNING: tune/chromaticity trim of beam {beam} not converged, "
-          f"remaining deltas: {delta}")
+def match_tune_chroma_and_ip_orbit(line, beam, tw_ref, qx, qy, chroma_x, chroma_y):
+    # Tunes and chromaticities with dq[x,y].b[1,2] and dqp[x,y].b[1,2], and
+    # x, y at the IPs back to the reference tw_ref with on_[x,y]ip[1,2,5,8]b[1,2],
+    # as the octupole feed-down from the orbit bumps changes all of them.
+    # The default step is too small for the chromaticity knobs (does not converge)
+    ips = ["ip1", "ip2", "ip5", "ip8"]
+    line.match(
+        vary=[xt.VaryList([f"dqx.b{beam}", f"dqy.b{beam}"], step=1e-5),
+              xt.VaryList([f"dqpx.b{beam}", f"dqpy.b{beam}"], step=1e-2),
+              xt.VaryList([f"on_{pp}ip{ip[-1]}b{beam}" for ip in ips for pp in "xy"], step=1e-4)], # in mm
+        targets=[xt.TargetSet(qx=qx, qy=qy, tol=1e-5),
+                 xt.TargetSet(dqx=chroma_x, dqy=chroma_y, tol=1e-2)]
+                + [xt.TargetSet(["x", "y"], value=tw_ref, at=ip, tol=1e-8) for ip in ips],
+    )
 
 
 def print_twiss(line, title):
@@ -461,22 +459,32 @@ def main():
 
     aperture_env = load_aperture_model(acc_models_tag)
 
-    # Octupoles first: the orbit bumps through them give a tune shift from
-    # feed-down, which is compensated by the tune/chromaticity trim below
-    lhc["i_mo.b1"] = args.i_mo
-    lhc["i_mo.b2"] = args.i_mo
-    print(f"Octupole current: i_mo.b1 = i_mo.b2 = {args.i_mo} A")
-
     lhc.b2.twiss_default["reverse"] = False
     for beam in [1, 2]:
         lhc[f"b{beam}"].twiss_default["method"] = "6d"
 
-    # Tunes and chromaticities, with the octupoles on and before beam-beam
     for beam in [1, 2]:
-        trim_tune_and_chroma(lhc, beam, args.qx, args.qy, args.dqx, args.dqy)
+        print_twiss(lhc[f"b{beam}"], f"Beam{beam} without beam-beam and apertures as loaded from acc-models:")
+
+    # Reference orbit at the IPs, before changing the octupole current
+    tw_ref = {beam: lhc[f"b{beam}"].twiss() for beam in [1, 2]}
+
+    # The orbit bumps through the octupoles give a tune, chromaticity and IP
+    # orbit change from feed-down, which is compensated by the matching below
+    lhc["i_mo.b1"] = args.i_mo
+    lhc["i_mo.b2"] = args.i_mo
+    print(f"Octupole current: i_mo.b1 = i_mo.b2 = {args.i_mo} A")
 
     for beam in [1, 2]:
-        print_twiss(lhc[f"b{beam}"], f"Beam{beam} without beam-beam and apertures:")
+        print_twiss(lhc[f"b{beam}"], f"Beam{beam} without beam-beam and apertures after MO change:")
+
+    # Tunes, chromaticities and IP orbit, with the octupoles on and before beam-beam
+    for beam in [1, 2]:
+        match_tune_chroma_and_ip_orbit(lhc[f"b{beam}"], beam, tw_ref[beam],
+                                       args.qx, args.qy, args.dqx, args.dqy)
+
+    for beam in [1, 2]:
+        print_twiss(lhc[f"b{beam}"], f"Beam{beam} without beam-beam and apertures after correction:")
 
     # ---------------------------------------------------------------------------
     # Beam-beam and apertures, per beam, and save
@@ -493,7 +501,7 @@ def main():
         print_twiss(line, f"Beam{beam} with {'beam-beam and ' if with_bb else ''}apertures:")
 
         imo = line[f"i_mo.b{beam}"]
-        save_name = f"hllhc_b{beam}_{acc_models_tag.replace('.', 'p')}_{'_'.join(re.split('/|.madx', optics_path)[:-1])}_qx{int(round(args.qx*1e3)-62000)}qy{int(round(args.qy*1e3)-60000)}_dqx{round(args.dqx)}dqy{round(args.dqy)}_imo{int(imo)}"
+        save_name = f"hllhc_b{beam}_{acc_models_tag.replace('.', 'p')}_{optics_path}_{part_of_cycle}{step_in_part}_{betastar}cm_qx{int(round(args.qx*1e3)-62000)}qy{int(round(args.qy*1e3)-60000)}_dqx{round(args.dqx)}dqy{round(args.dqy)}_imo{int(imo)}"
         if with_bb:
             bunch = bunch_b1 if beam == 1 else bunch_b2
             save_name += f"_bb_ip{''.join(ip[-1] for ip in ip_names)}_bunch{bunch}"
