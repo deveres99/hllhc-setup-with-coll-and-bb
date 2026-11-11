@@ -446,9 +446,9 @@ def main():
     else:
         json_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/xsuite/lhc_thin.json"
     lhc = xt.load(json_url)
-    optics_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/strengths/{optics_path}/{part_of_cycle}/{part_of_cycle}_A{betastar}cmC{betastar}cmA10mL{betastar_lhcb}cm_{step_in_part}.madx"
+    optics_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/strengths/{optics_path}/{part_of_cycle}/{part_of_cycle}_A{betastar}cmC{betastar}cmA10mL{betastar_lhcb}cm_{step_in_part}_thin.madx"
     lhc.vars.load(optics_url)
-    settings_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/{acc_models_tag}/scenarios/cycle/pp/{part_of_cycle}/{time_step_in_part}/settings.madx"
+    settings_url = f"https://acc-models.web.cern.ch/acc-models/lhc/{acc_models_tag}/scenarios/cycle/pp/{part_of_cycle}/{time_step_in_part}/settings.madx"
     lhc.vars.load(settings_url)
     lhc.new_particle("beam1", mass0=938272046.0, q0=1, p0c="p0c")
     lhc.b1.set_particle_ref("beam1")
