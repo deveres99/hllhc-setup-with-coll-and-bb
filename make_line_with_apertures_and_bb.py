@@ -4,7 +4,6 @@ import re
 import numpy as np
 
 import xtrack as xt
-from xfields.config_tools.beambeam_config_tools import config_tools as bb_tools
 
 from xingKnobs import *
 
@@ -22,15 +21,37 @@ parser.add_argument(
 parser.add_argument(
     "optics_path",
     type=str,
-    help="path to optics file within strengths folder on acc-models"
+    help="path to folder containing the optics file within strengths folder on acc-models"
+)
+parser.add_argument(
+    "part_of_cycle",
+    type=str,
+    help="name of the part of the cycle, e.g. ramp, collapse, lumiramp, levelling"
+)
+parser.add_argument(
+    "step_in_part",
+    type=int,
+    help="number of the step in the specific part of the cycle"
+)
+parser.add_argument(
+    "time_step_in_part",
+    type=int,
+    help="time [s] of the step in the specific part of the cycle"
 )
 parser.add_argument(
     "betastar",
     type=str,
-    help="value of beta* in mm"
+    help="value of beta* in cm in ATLAS and CMS"
 )
 
-# Beam-beam inputs: only used (and then required) if beta* <= 980 mm, i.e. in collision
+parser.add_argument(
+    "--betastar_lhcb",
+    type=str,
+    default=150, 
+    help="value of beta* in cm in LHCb"
+)
+
+# Beam-beam inputs: only used (and then required) if beta* <= 98 cm, i.e. in collision
 parser.add_argument(
     "--filling_scheme",
     type=str,
@@ -109,7 +130,7 @@ NEMITT_X = 2.5e-6
 NEMITT_Y = 2.5e-6
 SIGMA_Z = 0.076
 NUM_SLICES_HEAD_ON = 11
-NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE = {"ip1": 25, "ip2": 20, "ip5": 25, "ip8": 20}
+NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE = {"ip1": 25, "ip2": 18, "ip5": 25, "ip8": 18}
 # Bunch slot of beam 2 colliding with bunch 0 of beam 1 at each IP
 DELAY_AT_IPS_SLOTS = {"ip1": 0, "ip2": 891, "ip5": 0, "ip8": 2670}
 BUNCH_SPACING_BUCKETS = 10
@@ -251,61 +272,6 @@ def collimator_table(line):
     return tt.rows[tt.element_type == "Drift"]
 
 
-def collimator_at(tt, s):
-    # Collimator placeholder drift containing s, or closer than COLLIMATOR_MARGIN/2
-    # to its edges (half, so that lenses moved to COLLIMATOR_MARGIN outside the
-    # edges are safely clear of it), as (name, s_start, s_end)
-    for name, s0, s1 in zip(tt.name, tt.s_start, tt.s_end):
-        if s0 - COLLIMATOR_MARGIN / 2 < s < s1 + COLLIMATOR_MARGIN / 2:
-            return name, s0, s1
-    return None
-
-
-def move_lenses_out_of_collimators(env, bb_dfs):
-    # Long-range lenses falling inside a collimator placeholder would slice it,
-    # so that the collimator can no longer be installed (e.g. with xcoll).
-    # Such lenses are moved to just outside the closest edge of the placeholder. Both
-    # partner lenses are moved by the same amount, so that they stay at the
-    # same physical location. atPosition is w.r.t. the IP, along b1 for the b1
-    # line and along b4 (opposite sign) for the b2 line.
-    tt = {nn: collimator_table(env[nn]) for nn in ["b1", "b2"]}
-    s_ip = {nn: {ip: env[nn].get_table()["s", ip] for ip in set(bb_dfs[nn].ip_name)}
-            for nn in ["b1", "b2"]}
-    sign = {"b1": 1, "b2": -1}
-
-    df_b1 = bb_dfs["b1"]
-    for name in df_b1.index[df_b1.label == "bb_lr"]:
-        partner = df_b1.loc[name, "other_elementName"]
-        ip = df_b1.loc[name, "ip_name"]
-        d = df_b1.loc[name, "atPosition"]
-
-        def clashes(d):
-            out = []
-            for nn in ["b1", "b2"]:
-                coll = collimator_at(tt[nn], s_ip[nn][ip] + sign[nn] * d)
-                if coll is not None:
-                    out.append((nn, coll))
-            return out
-
-        found = clashes(d)
-        if not found:
-            continue
-
-        # Candidate positions: just outside the edges of the clashing placeholders, closest first
-        candidates = sorted({sign[nn] * (s_edge - s_ip[nn][ip])
-                             for nn, (_, s0, s1) in found
-                             for s_edge in (s0 - COLLIMATOR_MARGIN, s1 + COLLIMATOR_MARGIN)},
-                            key=lambda dd: abs(dd - d))
-        d_new = next((dd for dd in candidates if not clashes(dd)), None)
-        if d_new is None:
-            raise ValueError(f"Cannot move {name} out of {[coll[0] for _, coll in found]}")
-
-        print(f"Moving {name} and {partner} by {d_new - d:+.3f} m "
-              f"out of {', '.join(sorted(set(coll[0] for _, coll in found)))}")
-        bb_dfs["b1"].loc[name, "atPosition"] = d_new
-        bb_dfs["b2"].loc[partner, "atPosition"] = -d_new
-
-
 def install_beam_beam(env, ip_names, intensity, filling, bunch_b1, bunch_b2):
     # Lines start at IP1, so lenses left of IP1 would land at negative s:
     # install from IP3 and cycle back to keep s consistent with the aperture files
@@ -313,49 +279,29 @@ def install_beam_beam(env, ip_names, intensity, filling, bunch_b1, bunch_b2):
     env.b1.cycle("ip3")
     env.b2.cycle("ip3")
 
-    # Same as env.xfields.install_beambeam_interactions(...), but with the
-    # lenses moved out of the collimator placeholders before inserting them
-    bb_dfs = {}
-    for nn, other in [("b1", "b2"), ("b2", "b1")]:
-        bb_dfs[nn] = bb_tools.generate_set_of_bb_encounters_1beam(
-            circumference=env[nn].get_length(),
-            harmonic_number=HARMONIC_NUMBER,
-            bunch_spacing_buckets=BUNCH_SPACING_BUCKETS,
-            numberOfHOSlices=NUM_SLICES_HEAD_ON,
-            bunch_particle_charge=env[nn].particle_ref.q0,
-            sigt=SIGMA_Z,
-            relativistic_beta=env[nn].particle_ref.beta0[0],
-            ip_names=ip_names,
-            numberOfLRPerIRSide=[NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE[ip] for ip in ip_names],
-            beam_name=nn,
-            other_beam_name=other,
-        )
-    bb_dfs["b2"]["atPosition"] = -bb_dfs["b2"]["atPosition"] # b2 line is in the b4 frame
+    collimators = {nn: collimator_table(env[nn]) for nn in ["b1", "b2"]}
 
-    move_lenses_out_of_collimators(env, bb_dfs)
+    env.xfields.install_beambeam_interactions(
+        clockwise_line="b1",
+        anticlockwise_line="b2",
+        ip_names=ip_names,
+        num_long_range_encounters_per_side=NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE,
+        num_slices_head_on=NUM_SLICES_HEAD_ON,
+        harmonic_number=HARMONIC_NUMBER,
+        bunch_spacing_buckets=BUNCH_SPACING_BUCKETS,
+        sigmaz=SIGMA_Z,
+        delay_at_ips_slots=[DELAY_AT_IPS_SLOTS[ip] for ip in ip_names],
+    )
 
-    keep_columns = ["beam", "other_beam", "ip_name", "elementName", "other_elementName", "label",
-                    "self_particle_charge", "self_relativistic_beta", "self_frac_of_bunch",
-                    "identifier", "s_crab"]
+    # No lens may be inside a collimator placeholder or within COLLIMATOR_MARGIN
+    # of its edges, otherwise the collimator cannot be installed (e.g. with xcoll)
     for nn in ["b1", "b2"]:
-        collimators = collimator_table(env[nn]).name
-        bb_tools.install_dummy_bb_lenses(bb_df=bb_dfs[nn], line=env[nn])
-        bb_dfs[nn] = bb_dfs[nn][keep_columns].copy()
-        sliced = [cc for cc in collimators if cc not in env[nn].element_names]
-        assert not sliced, f"Beam-beam lenses sliced collimator placeholders in {nn}: {sliced}"
-
-    bb_tools._compute_delays(bb_dfs["b1"], bb_dfs["b2"],
-                             [DELAY_AT_IPS_SLOTS[ip] for ip in ip_names], ip_names,
-                             HARMONIC_NUMBER, BUNCH_SPACING_BUCKETS)
-
-    env._bb_config = {
-        "dataframes": {"clockwise": bb_dfs["b1"], "anticlockwise": bb_dfs["b2"]},
-        "ip_names": ip_names,
-        "clockwise_line": "b1",
-        "anticlockwise_line": "b2",
-        "bunch_spacing_buckets": BUNCH_SPACING_BUCKETS,
-        "harmonic_number": HARMONIC_NUMBER,
-    }
+        lenses = env[nn].get_table().rows["bb_.*"]
+        tt = collimators[nn]
+        clashing = [cc for cc, s0, s1 in zip(tt.name, tt.s_start, tt.s_end)
+                    if np.any((lenses.s > s0 - COLLIMATOR_MARGIN) & (lenses.s < s1 + COLLIMATOR_MARGIN))]
+        assert not clashing, (f"Beam-beam lenses in or too close to collimator placeholders in {nn}: "
+                              f"{clashing}, reduce NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE")
 
     env.b1.cycle(start_names["b1"])
     env.b2.cycle(start_names["b2"])
@@ -435,7 +381,7 @@ def install_apertures(env, line, beam, betastar, aperture):
 
     tw = line.twiss()
 
-    env["velo_at_parking"] = 1 if float(betastar) > 980 else 0
+    env["velo_at_parking"] = 1 if float(betastar) > 98 else 0
     velo_shift_x = tw.x[tw.name == "ip8"][0]
     velo_shift_y = tw.y[tw.name == "ip8"][0]
     env["velo_shift_x"] = f"0*velo_at_parking+({velo_shift_x})*(1-velo_at_parking)"
@@ -484,11 +430,15 @@ def main():
     isthick = args.isthick
     acc_models_tag = args.acc_models_tag
     optics_path = args.optics_path
+    part_of_cycle = args.part_of_cycle
+    step_in_part = args.step_in_part
+    time_step_in_part = args.time_step_in_part
     betastar = args.betastar
+    betastar_lhcb = args.betastar_lhcb
 
     # No collisions at injection and flat-top (beams separated), so beam-beam
-    # is only installed for beta* <= 980 mm
-    with_bb = float(betastar) <= 980
+    # is only installed for beta* <= 98 cm
+    with_bb = float(betastar) <= 98
     if with_bb:
         missing = [nn for nn in ["filling_scheme", "bunch", "intensity"]
                    if getattr(args, nn) is None]
@@ -501,18 +451,25 @@ def main():
         with open(args.filling_scheme, "r") as fid:
             filling = json.load(fid)
     else:
-        print(f"beta*={betastar} mm > 980 mm: no beam-beam installed, beam-beam inputs are ignored")
+        print(f"beta*={betastar} mm > 98 cm: no beam-beam installed, beam-beam inputs are ignored")
 
     if isthick:
         json_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/xsuite/lhc.json"
     else:
         json_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/xsuite/lhc_thin.json"
     lhc = xt.load(json_url)
-    optics_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/strengths/{optics_path}"
+    optics_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/strengths/{optics_path}/{part_of_cycle}/{part_of_cycle}_A{betastar}cmC{betastar}cmA10mL{betastar_lhcb}cm_{step_in_part}.madx"
     lhc.vars.load(optics_url)
+    settings_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/{acc_models_tag}/scenarios/cycle/pp/{part_of_cycle}/{time_step_in_part}/settings.madx"
+    lhc.vars.load(settings_url)
+    lhc.new_particle("beam1", mass0=938272046.0, q0=1, p0c="p0c")
+    lhc.b1.set_particle_ref("beam1")
+    lhc.new_particle("beam2", mass0=938272046.0, q0=1, p0c="p0c")
+    lhc.b2.set_particle_ref("beam2")
 
     print("Loaded line:", json_url)
     print("Loaded optics:", optics_url)
+    print("Loaded settings:", settings_url)
 
     aperture_env = load_aperture_model(acc_models_tag)
 
@@ -522,31 +479,9 @@ def main():
     lhc["i_mo.b2"] = args.i_mo
     print(f"Octupole current: i_mo.b1 = i_mo.b2 = {args.i_mo} A")
 
-
-    # ---------------------------------------------------------------------------
-    # Machine settings (same as make_line_with_apertures.py, for both beams)
-    # ---------------------------------------------------------------------------
     lhc.b2.twiss_default["reverse"] = False
     for beam in [1, 2]:
         lhc[f"b{beam}"].twiss_default["method"] = "6d"
-
-    lhc["on_sep1"] = 1 if float(betastar) > 980 else 0
-    lhc["on_sep2"] = 1 if float(betastar) > 980 else 0
-    lhc["on_sep5"] = 1 if float(betastar) > 980 else 0
-    lhc["on_sep8"] = 1 if float(betastar) > 980 else 0
-    for key, val in xingKnobs[f"{betastar}"].items():
-        lhc[key] = val
-
-    # Get beam size at IP2 and IP8 and set separation according to user input
-    tw = lhc.b1.twiss()
-    beam_sizes = tw.get_beam_covariance(nemitt_x=NEMITT_X, nemitt_y=NEMITT_Y,
-                                        gemitt_zeta=SIGMA_Z**2 / tw.bets0)
-    sigma_x_IP2 = beam_sizes.rows["ip2"].sigma_x[0] * 1e3 # in mm
-    sigma_x_IP8 = beam_sizes.rows["ip8"].sigma_x[0] * 1e3 # in mm
-    lhc["sep2_sigma"] = args.sep2_sigma
-    lhc["sep8_sigma"] = args.sep8_sigma
-    lhc.vars["on_sep2h"] = lhc.vars["on_sep2h"]._expr + sigma_x_IP2 * lhc.vars["sep2_sigma"]
-    lhc.vars["on_sep8h"] = lhc.vars["on_sep8h"]._expr + sigma_x_IP8 * lhc.vars["sep8_sigma"]
 
     # Tunes and chromaticities, with the octupoles on and before beam-beam
     for beam in [1, 2]:
