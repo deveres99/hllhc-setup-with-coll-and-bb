@@ -23,6 +23,7 @@ def main():
 
     nemitt_x = 2.5e-6
     nemitt_y = 2.5e-6
+    sigma_z = 0.076
 
     line = xt.load(line_path)
 
@@ -31,8 +32,12 @@ def main():
     '''
     line["beambeam_scale"] = 0
     tw = line.twiss(method="6d")
+    b_size = tw.get_beam_covariance(nemitt_x=nemitt_x, nemitt_y=nemitt_y,
+                                    gemitt_zeta=sigma_z**2 / tw.bets0)
     line["beambeam_scale"] = 1.0
     tw_bb = line.twiss(method="6d")
+    b_size_bb = tw.get_beam_covariance(nemitt_x=nemitt_x, nemitt_y=nemitt_y,
+                                       gemitt_zeta=sigma_z**2 / tw.bets0)
 
     print(tw.qx, tw.qy, tw.dqx, tw.dqy)
     print(tw_bb.qx, tw_bb.qy, tw_bb.dqx, tw_bb.dqy)
@@ -71,10 +76,10 @@ def main():
     ax0.tick_params(axis="both", labelsize=fs - 2)
     ax0.legend(loc="best", fontsize=fs-2)
 
-    ax1.plot(tw.s, (tw_bb.x-tw.x)/tw.x*100, color='black', linestyle='-', label=r"$x$")
-    ax1.plot(tw.s, (tw_bb.y-tw.y)/tw.y*100, color='red', linestyle='-', label=r"$y$")
+    ax1.plot(tw.s, (tw_bb.x/b_size_bb.sigma_x-tw.x/b_size.sigma_x), color='black', linestyle='-', label=r"$x$")
+    ax1.plot(tw.s, (tw_bb.y/b_size_bb.sigma_y-tw.y/b_size.sigma_y), color='red', linestyle='-', label=r"$y$")
     ax1.set_xlabel(r"$s$ [m]", fontsize=fs)
-    ax1.set_ylabel(r"$\Delta$ orbit [%]", fontsize=fs)
+    ax1.set_ylabel(r"$\Delta$ orbit [$\sigma$]", fontsize=fs)
     ax1.tick_params(axis="both", labelsize=fs - 2)
     ax1.legend(loc="best", fontsize=fs-2)
 
