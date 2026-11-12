@@ -455,10 +455,11 @@ def main():
 
     if isthick:
         json_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/xsuite/lhc.json"
+        optics_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/strengths/{optics_path}/{part_of_cycle}/{part_of_cycle}_A{betastar}cmC{betastar}cmA10mL{betastar_lhcb}cm_{step_in_part}.madx"
     else:
         json_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/xsuite/lhc_thin.json"
+        optics_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/strengths/{optics_path}/{part_of_cycle}/{part_of_cycle}_A{betastar}cmC{betastar}cmA10mL{betastar_lhcb}cm_{step_in_part}_thin.madx"
     lhc = xt.load(json_url)
-    optics_url = f"https://gitlab.cern.ch/acc-models/acc-models-lhc/-/raw/{acc_models_tag}/strengths/{optics_path}/{part_of_cycle}/{part_of_cycle}_A{betastar}cmC{betastar}cmA10mL{betastar_lhcb}cm_{step_in_part}_thin.madx"
     lhc.vars.load(optics_url)
     settings_url = f"https://acc-models.web.cern.ch/acc-models/lhc/{acc_models_tag}/scenarios/cycle/pp/{part_of_cycle}/{time_step_in_part}/settings.madx"
     lhc.vars.load(settings_url)
