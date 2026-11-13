@@ -7,18 +7,18 @@ from filling_scheme_inspector import bb_toolbox as btb
 
 
 def main():
-    numberOfLRToConsider = 33
+    NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE = {"ATLAS/CMS": 25, "LHCB": 18, "ALICE": 18}
     [B1,B2] = tbtb.filling_scheme_from_scheme_editor("./example_data/25ns_2760b_2748_2492_2574_288bpi_13inj_800ns_bs200ns.json")
-    [df_B1,df_B2] = btb.bbschedule(B1,B2,numberOfLRToConsider)
+    [df_B1,df_B2] = btb.bbschedule(B1,B2,np.nan,Dict_nLRs=NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE)
 
     '''
     Get all families (unique combinations of BBLR in each detector) and the 
     corresponding bunch counts
     '''
-    summary_B1 = result = df_B1.groupby(
+    summary_B1 = df_B1.groupby(
         ['# of LR in ATLAS/CMS', '# of LR in ALICE', '# of LR in LHCB']
     ).size().reset_index(name='count')
-    summary_B2 = result = df_B2.groupby(
+    summary_B2 = df_B2.groupby(
             ['# of LR in ATLAS/CMS', '# of LR in ALICE', '# of LR in LHCB']
         ).size().reset_index(name='count')
 
@@ -46,13 +46,13 @@ def main():
     print(f"\t# of LR in ATLAS/CMS: {num_LR_ATLAS_CMS_B1}")
     print(f"\t# of LR in ALICE: {num_LR_ALICE_B1}")
     print(f"\t# of LR in LHCB: {num_LR_LHCB_B1}")
-    print("-- example bunches:", mrb_B1[:10], "\n")
+    print("-- example bunches:", mrb_B1[:16], "\n")
 
     print(f"Most representative bunch family in B2 with {summary_B2.loc[mrf_B2, "count"]}/{tot_B2} bunches:")
     print(f"\t# of LR in ATLAS/CMS: {num_LR_ATLAS_CMS_B2}")
     print(f"\t# of LR in ALICE: {num_LR_ALICE_B2}")
     print(f"\t# of LR in LHCB: {num_LR_LHCB_B2}")
-    print("-- example bunches:", mrb_B2[:10], "\n")
+    print("-- example bunches:", mrb_B2[:16], "\n")
 
 
     '''
@@ -142,7 +142,7 @@ def main():
         linestyle='--'
     )
     ax2b.plot(
-        summary_B1.index.to_numpy(), summary_B1["# of LR in ATLAS/CMS"].to_numpy(), 
+        summary_B2.index.to_numpy(), summary_B2["# of LR in ATLAS/CMS"].to_numpy(), 
         color='black', 
         marker='.', 
         linestyle='None'
