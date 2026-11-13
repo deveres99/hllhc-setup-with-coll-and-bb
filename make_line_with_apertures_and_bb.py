@@ -50,6 +50,30 @@ parser.add_argument(
     default=150, 
     help="value of beta* in cm in LHCb"
 )
+parser.add_argument(
+    "--on_sep2h",
+    type=float,
+    default=None,
+    help="horizontal separation knob in IP2"
+)
+parser.add_argument(
+    "--on_sep2v",
+    type=float,
+    default=None,
+    help="vertical separation knob in IP2"
+)
+parser.add_argument(
+    "--on_sep8h",
+    type=float,
+    default=None,
+    help="horizontal separation knob in IP8"
+)
+parser.add_argument(
+    "--on_sep8v",
+    type=float,
+    default=None,
+    help="vertical separation knob in IP8"
+)
 
 # Beam-beam inputs: only used (and then required) if beta* <= 98 cm, i.e. in collision
 parser.add_argument(
@@ -495,6 +519,12 @@ def main():
     print("Loaded line:", json_url)
     print("Loaded optics:", optics_url)
     print("Loaded settings:", settings_url)
+
+    # IP2 and 8 custom separation
+    for nn in ["on_sep2h", "on_sep2v", "on_sep8h", "on_sep8v"]:
+        if getattr(args, nn) is None:
+            continue
+        lhc[nn] = getattr(args, nn)
 
     aperture_env = load_aperture_model(acc_models_tag)
 
