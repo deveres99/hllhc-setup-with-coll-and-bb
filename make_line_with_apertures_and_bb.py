@@ -69,6 +69,21 @@ parser.add_argument(
     help="index of the bunch to simulate for beam 2 (default: same as --bunch)"
 )
 parser.add_argument(
+    "--correction_bunch",
+    type=int,
+    default=None,
+    help="index of the bunch in beam 1 on which the IP orbit is corrected back to the "
+         "reference with beam-beam on (default: same as --bunch)"
+)
+parser.add_argument(
+    "--correction_bunch_b2",
+    type=int,
+    default=None,
+    help="index of the bunch in beam 2 on which the IP orbit is corrected back to the "
+         "reference with beam-beam on (default: same as --correction_bunch if given, "
+         "otherwise the simulated bunch of beam 2)"
+)
+parser.add_argument(
     "--intensity",
     type=float,
     help="bunch intensity in number of particles per bunch, e.g. 2.2e11"
@@ -263,7 +278,7 @@ def collimator_table(line):
     return tt.rows[tt.element_type == "Drift"]
 
 
-def install_beam_beam(env, ip_names, intensity, filling, bunch_b1, bunch_b2):
+def install_beam_beam(env, ip_names, intensity):
     # Lines start at IP1, so lenses left of IP1 would land at negative s:
     # install from IP3 and cycle back to keep s consistent with the aperture files
     start_names = {nn: env[nn].element_names[0] for nn in ["b1", "b2"]}
@@ -301,13 +316,6 @@ def install_beam_beam(env, ip_names, intensity, filling, bunch_b1, bunch_b2):
         num_particles=intensity,
         nemitt_x=NEMITT_X,
         nemitt_y=NEMITT_Y,
-    )
-
-    env.xfields.apply_filling_pattern(
-        filling_pattern_cw=filling["beam1"],
-        filling_pattern_acw=filling["beam2"],
-        i_bunch_cw=bunch_b1,
-        i_bunch_acw=bunch_b2,
     )
 
     # configure_beambeam_interactions stores the kick of each lens on the closed
@@ -399,20 +407,33 @@ def install_apertures(env, line, beam, betastar, aperture):
     _ = check_aperture(line)
 
 
+def ip_orbit_vary_and_targets(beam, tw_ref):
+    # x, y at the IPs back to the reference tw_ref with the van der Meer knobs
+    # on_[x,y]ip[1,2,5,8]b[1,2]
+    ips = ["ip1", "ip2", "ip5", "ip8"]
+    vary = xt.VaryList([f"on_{pp}ip{ip[-1]}b{beam}" for ip in ips for pp in "xy"], step=1e-4) # in mm
+    targets = [xt.TargetSet(["x", "y"], value=tw_ref, at=ip, tol=1e-8) for ip in ips]
+    return vary, targets
+
+
 def match_tune_chroma_and_ip_orbit(line, beam, tw_ref, qx, qy, chroma_x, chroma_y):
     # Tunes and chromaticities with dq[x,y].b[1,2] and dqp[x,y].b[1,2], and
-    # x, y at the IPs back to the reference tw_ref with on_[x,y]ip[1,2,5,8]b[1,2],
-    # as the octupole feed-down from the orbit bumps changes all of them.
+    # the IP orbit, as the octupole feed-down from the orbit bumps changes all of them.
     # The default step is too small for the chromaticity knobs (does not converge)
-    ips = ["ip1", "ip2", "ip5", "ip8"]
+    vary_ip, targets_ip = ip_orbit_vary_and_targets(beam, tw_ref)
     line.match(
         vary=[xt.VaryList([f"dqx.b{beam}", f"dqy.b{beam}"], step=1e-5),
               xt.VaryList([f"dqpx.b{beam}", f"dqpy.b{beam}"], step=1e-2),
-              xt.VaryList([f"on_{pp}ip{ip[-1]}b{beam}" for ip in ips for pp in "xy"], step=1e-4)], # in mm
+              vary_ip],
         targets=[xt.TargetSet(qx=qx, qy=qy, tol=1e-5),
                  xt.TargetSet(dqx=chroma_x, dqy=chroma_y, tol=1e-2)]
-                + [xt.TargetSet(["x", "y"], value=tw_ref, at=ip, tol=1e-8) for ip in ips],
+                + targets_ip,
     )
+
+
+def match_ip_orbit(line, beam, tw_ref):
+    vary, targets = ip_orbit_vary_and_targets(beam, tw_ref)
+    line.match(vary=vary, targets=targets)
 
 
 def print_twiss(line, title):
@@ -448,6 +469,9 @@ def main():
         ip_names = parse_ips(args.ips)
         bunch_b1 = args.bunch
         bunch_b2 = args.bunch if args.bunch_b2 is None else args.bunch_b2
+        corr_bunch_b1 = bunch_b1 if args.correction_bunch is None else args.correction_bunch
+        corr_bunch_b2 = (args.correction_bunch_b2 if args.correction_bunch_b2 is not None
+                         else bunch_b2 if args.correction_bunch is None else args.correction_bunch)
         with open(args.filling_scheme, "r") as fid:
             filling = json.load(fid)
     else:
@@ -508,7 +532,31 @@ def main():
         env, line = extract_lines(lhc, beam)
 
         if with_bb:
-            install_beam_beam(env, ip_names, args.intensity, filling, bunch_b1, bunch_b2)
+            install_beam_beam(env, ip_names, args.intensity)
+
+            # Emulate the operators correcting the IP orbit back to the reference
+            # on the signal of a selected bunch (no bunch-by-bunch correction):
+            # correct with the beam-beam pattern of the correction bunches, then
+            # switch to the pattern of the simulated bunches
+            if BB_ORBIT_EFFECT:
+                env.xfields.apply_filling_pattern(
+                    filling_pattern_cw=filling["beam1"],
+                    filling_pattern_acw=filling["beam2"],
+                    i_bunch_cw=corr_bunch_b1,
+                    i_bunch_acw=corr_bunch_b2,
+                )
+                print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
+                                  f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) before IP orbit correction:")
+                match_ip_orbit(line, beam, tw_ref[beam])
+                print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
+                                  f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) after IP orbit correction:")
+
+            env.xfields.apply_filling_pattern(
+                filling_pattern_cw=filling["beam1"],
+                filling_pattern_acw=filling["beam2"],
+                i_bunch_cw=bunch_b1,
+                i_bunch_acw=bunch_b2,
+            )
             print_twiss(line, f"Beam{beam} with beam-beam in {', '.join(ip_names)} "
                               f"(bunch b1={bunch_b1}, b2={bunch_b2}, intensity={args.intensity:.3g}):")
 
