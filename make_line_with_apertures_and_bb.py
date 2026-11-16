@@ -156,7 +156,7 @@ parser.add_argument(
 NEMITT_X = 2.5e-6
 NEMITT_Y = 2.5e-6
 SIGMA_Z = 0.076
-NUM_SLICES_HEAD_ON = 11
+NUM_SLICES_HEAD_ON = 21
 NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE = {"ip1": 25, "ip2": 18, "ip5": 25, "ip8": 18}
 # Bunch slot of beam 2 colliding with bunch 0 of beam 1 at each IP
 DELAY_AT_IPS_SLOTS = {"ip1": 0, "ip2": 891, "ip5": 0, "ip8": 2670}
@@ -582,6 +582,11 @@ def main():
                 print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
                                   f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) before IP orbit correction:")
                 match_ip_orbit(line, beam, tw_ref[beam])
+                env.xfields.configure_beambeam_interactions(
+                    num_particles=args.intensity,
+                    nemitt_x=NEMITT_X,
+                    nemitt_y=NEMITT_Y,
+                )
                 print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
                                   f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) after IP orbit correction:")
 
