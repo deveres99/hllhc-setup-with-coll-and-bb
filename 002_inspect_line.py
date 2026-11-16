@@ -36,8 +36,8 @@ def main():
                                     gemitt_zeta=sigma_z**2 / tw.bets0)
     line["beambeam_scale"] = 1.0
     tw_bb = line.twiss(method="6d")
-    b_size_bb = tw.get_beam_covariance(nemitt_x=nemitt_x, nemitt_y=nemitt_y,
-                                       gemitt_zeta=sigma_z**2 / tw.bets0)
+    b_size_bb = tw_bb.get_beam_covariance(nemitt_x=nemitt_x, nemitt_y=nemitt_y,
+                                       gemitt_zeta=sigma_z**2 / tw_bb.bets0)
 
     print(tw.qx, tw.qy, tw.dqx, tw.dqy)
     print(tw_bb.qx, tw_bb.qy, tw_bb.dqx, tw_bb.dqy)
