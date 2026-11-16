@@ -39,8 +39,11 @@ def main():
     b_size_bb = tw_bb.get_beam_covariance(nemitt_x=nemitt_x, nemitt_y=nemitt_y,
                                        gemitt_zeta=sigma_z**2 / tw_bb.bets0)
 
-    print(tw.qx, tw.qy, tw.dqx, tw.dqy)
-    print(tw_bb.qx, tw_bb.qy, tw_bb.dqx, tw_bb.dqy)
+    print(tw.qx, tw.qy, tw.dqx, tw.dqy, tw.c_minus)
+    print(tw_bb.qx, tw_bb.qy, tw_bb.dqx, tw_bb.dqy, tw_bb.c_minus)
+
+    for name in line.get_table().rows.match("BeamBeamBiGaussian3D.*", col="element_type").name:
+        print(name, line[name].slices_other_beam_x_center, line[name].slices_other_beam_y_center)
 
     fs = 18
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), layout="tight")
@@ -51,6 +54,8 @@ def main():
     ax0.plot(tw_bb.s, tw_bb.betx, color='gray', linestyle='--', label=r"$x$, with BB")
     ax0.plot(tw.s, tw.bety, color='red', linestyle='-', label=r"$y$, no BB")
     ax0.plot(tw_bb.s, tw_bb.bety, color='coral', linestyle='--', label=r"$y$, with BB")
+    for i in [1, 2, 5, 8]:
+        ax0.axvline(tw.s[tw.name == f"ip{i}"], color='blue', linestyle='--')
     ax0.set_xlabel(r"$s$ [m]", fontsize=fs)
     ax0.set_ylabel(r"$\beta$ [m]", fontsize=fs)
     ax0.tick_params(axis="both", labelsize=fs - 2)
@@ -60,6 +65,8 @@ def main():
     ax1.plot(tw_bb.s, tw_bb.x * 1e3, color='gray', linestyle='--', label=r"$x$, with BB")
     ax1.plot(tw.s, tw.y * 1e3, color='red', linestyle='-', label=r"$y$, no BB")
     ax1.plot(tw_bb.s, tw_bb.y * 1e3, color='coral', linestyle='--', label=r"$y$, with BB")
+    for i in [1, 2, 5, 8]:
+        ax1.axvline(tw.s[tw.name == f"ip{i}"], color='blue', linestyle='--')
     ax1.set_xlabel(r"$s$ [m]", fontsize=fs)
     ax1.set_ylabel(r"orbit [mm]", fontsize=fs)
     ax1.tick_params(axis="both", labelsize=fs - 2)
@@ -71,6 +78,8 @@ def main():
 
     ax0.plot(tw.s, (tw_bb.betx-tw.betx)/tw.betx*100, color='black', linestyle='-', label=r"$x$")
     ax0.plot(tw.s, (tw_bb.bety-tw.bety)/tw.bety*100, color='red', linestyle='-', label=r"$y$")
+    for i in [1, 2, 5, 8]:
+        ax0.axvline(tw.s[tw.name == f"ip{i}"], color='blue', linestyle='--')
     ax0.set_xlabel(r"$s$ [m]", fontsize=fs)
     ax0.set_ylabel(r"$\Delta\beta$ [%]", fontsize=fs)
     ax0.tick_params(axis="both", labelsize=fs - 2)
@@ -78,6 +87,8 @@ def main():
 
     ax1.plot(tw.s, (tw_bb.x/b_size_bb.sigma_x-tw.x/b_size.sigma_x), color='black', linestyle='-', label=r"$x$")
     ax1.plot(tw.s, (tw_bb.y/b_size_bb.sigma_y-tw.y/b_size.sigma_y), color='red', linestyle='-', label=r"$y$")
+    for i in [1, 2, 5, 8]:
+        ax1.axvline(tw.s[tw.name == f"ip{i}"], color='blue', linestyle='--')
     ax1.set_xlabel(r"$s$ [m]", fontsize=fs)
     ax1.set_ylabel(r"$\Delta$ orbit [$\sigma$]", fontsize=fs)
     ax1.tick_params(axis="both", labelsize=fs - 2)
