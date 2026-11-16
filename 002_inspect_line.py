@@ -42,9 +42,6 @@ def main():
     print(tw.qx, tw.qy, tw.dqx, tw.dqy, tw.c_minus)
     print(tw_bb.qx, tw_bb.qy, tw_bb.dqx, tw_bb.dqy, tw_bb.c_minus)
 
-    for name in line.get_table().rows.match("BeamBeamBiGaussian3D.*", col="element_type").name:
-        print(name, line[name].slices_other_beam_x_center, line[name].slices_other_beam_y_center)
-
     fs = 18
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), layout="tight")
     ax0 = axes[0]
