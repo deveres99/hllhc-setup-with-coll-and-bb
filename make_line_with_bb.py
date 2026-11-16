@@ -408,11 +408,6 @@ def main():
                 print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
                                   f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) before IP orbit correction:")
                 match_ip_orbit(line, beam, tw_ref[beam])
-                env.xfields.configure_beambeam_interactions(
-                    num_particles=args.intensity,
-                    nemitt_x=NEMITT_X,
-                    nemitt_y=NEMITT_Y,
-                )
                 print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
                                   f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) after IP orbit correction:")
 
