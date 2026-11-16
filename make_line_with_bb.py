@@ -238,14 +238,18 @@ def install_beam_beam(env, ip_names, intensity):
         assert not clashing, (f"Beam-beam lenses in or too close to collimator placeholders in {nn}: "
                               f"{clashing}, reduce NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE")
 
-    env.b1.cycle(start_names["b1"])
-    env.b2.cycle(start_names["b2"])
-
+    # Configure before cycling back: the lens geometry comes from a survey
+    # starting at each IP, and with a line starting at IP1 the lenses left of
+    # IP1 sit a full turn away, where the survey does not close exactly
+    # (~0.1 mm), which gives them wrong separations
     env.xfields.configure_beambeam_interactions(
         num_particles=intensity,
         nemitt_x=NEMITT_X,
         nemitt_y=NEMITT_Y,
     )
+
+    env.b1.cycle(start_names["b1"])
+    env.b2.cycle(start_names["b2"])
 
     # configure_beambeam_interactions stores the kick of each lens on the closed
     # orbit without beam-beam in post_subtract_*, which the lens subtracts from

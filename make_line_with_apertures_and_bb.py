@@ -333,14 +333,18 @@ def install_beam_beam(env, ip_names, intensity):
         assert not clashing, (f"Beam-beam lenses in or too close to collimator placeholders in {nn}: "
                               f"{clashing}, reduce NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE")
 
-    env.b1.cycle(start_names["b1"])
-    env.b2.cycle(start_names["b2"])
-
+    # Configure before cycling back: the lens geometry comes from a survey
+    # starting at each IP, and with a line starting at IP1 the lenses left of
+    # IP1 sit a full turn away, where the survey does not close exactly
+    # (~0.1 mm), which gives them wrong separations
     env.xfields.configure_beambeam_interactions(
         num_particles=intensity,
         nemitt_x=NEMITT_X,
         nemitt_y=NEMITT_Y,
     )
+
+    env.b1.cycle(start_names["b1"])
+    env.b2.cycle(start_names["b2"])
 
     # configure_beambeam_interactions stores the kick of each lens on the closed
     # orbit without beam-beam in post_subtract_*, which the lens subtracts from
@@ -441,13 +445,13 @@ def ip_orbit_vary_and_targets(beam, tw_ref):
 
 
 def match_tune_chroma_and_ip_orbit(line, beam, tw_ref, qx, qy, chroma_x, chroma_y):
-    # Tunes and chromaticities with dq[x,y].b[1,2] and dqp[x,y].b[1,2], and
+    # Tunes and chromaticities with dq[x,y].b[1,2]_sq and dqp[x,y].b[1,2]_sq, and
     # the IP orbit, as the octupole feed-down from the orbit bumps changes all of them.
     # The default step is too small for the chromaticity knobs (does not converge)
     vary_ip, targets_ip = ip_orbit_vary_and_targets(beam, tw_ref)
     line.match(
-        vary=[xt.VaryList([f"dqx.b{beam}", f"dqy.b{beam}"], step=1e-5),
-              xt.VaryList([f"dqpx.b{beam}", f"dqpy.b{beam}"], step=1e-2),
+        vary=[xt.VaryList([f"dqx.b{beam}_sq", f"dqy.b{beam}_sq"], step=1e-5),
+              xt.VaryList([f"dqpx.b{beam}_sq", f"dqpy.b{beam}_sq"], step=1e-2),
               vary_ip],
         targets=[xt.TargetSet(qx=qx, qy=qy, tol=1e-5),
                  xt.TargetSet(dqx=chroma_x, dqy=chroma_y, tol=1e-2)]
