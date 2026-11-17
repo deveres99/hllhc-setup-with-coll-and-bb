@@ -91,8 +91,12 @@ the signal of a selected bunch (there is no bunch-by-bunch orbit correction), th
 first matched back to the reference with the BB lenses of `correction_bunch` (`correction_bunch_b2`) switched on, and 
 then the BB lenses of `bunch` (`bunch_b2`) are switched on. A bunch with a different LR pattern than the correction 
 bunch (e.g. at the end of a train) will thus have a small residual IP orbit offset. Pick a bunch in the middle of a 
-train (most representative family from step 1) as correction bunch. With `BB_ORBIT_EFFECT = False` the BB does not 
-change the closed orbit and no correction is done.
+train (most representative family from step 1) as correction bunch. This correction is stored in the variables 
+`on_xip<n>b<beam>_bb`, `on_yip<n>b<beam>_bb`, and the van der Meer knobs become 
+`on_xip<n>b<beam> = <value after the octupole correction> + on_xip<n>b<beam>_bb * beambeam_scale`, so setting 
+`beambeam_scale` to 0 in the saved line switches off the BB and its orbit correction together (the IP orbit is then 
+back at the reference). With `BB_ORBIT_EFFECT = False` the BB does not change the closed orbit and no correction is 
+done.
 
 The number of LR encounters per side installed at each IP is set by `NUM_LONG_RANGE_ENCOUNTERS_PER_SIDE` in the script 
 (25 in IP1 and IP5, 18 in IP2 and IP8, so that no BB lens is installed in a collimator placeholder drift).
