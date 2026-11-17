@@ -263,11 +263,11 @@ def install_beam_beam(env, ip_names, intensity):
                         setattr(ll[name], f"post_subtract_{kk}", 0)
 
 
-def ip_orbit_vary_and_targets(beam, tw_ref):
+def ip_orbit_vary_and_targets(beam, tw_ref, suffix=""):
     # x, y at the IPs back to the reference tw_ref with the van der Meer knobs
-    # on_[x,y]ip[1,2,5,8]b[1,2]
+    # on_[x,y]ip[1,2,5,8]b[1,2] (or the variables with that name plus suffix)
     ips = ["ip1", "ip2", "ip5", "ip8"]
-    vary = xt.VaryList([f"on_{pp}ip{ip[-1]}b{beam}" for ip in ips for pp in "xy"], step=1e-4) # in mm
+    vary = xt.VaryList([f"on_{pp}ip{ip[-1]}b{beam}{suffix}" for ip in ips for pp in "xy"], step=1e-4) # in mm
     targets = [xt.TargetSet(["x", "y"], value=tw_ref, at=ip, tol=1e-8) for ip in ips]
     return vary, targets
 
@@ -287,8 +287,17 @@ def match_tune_chroma_and_ip_orbit(line, beam, tw_ref, qx, qy, chroma_x, chroma_
     )
 
 
-def match_ip_orbit(line, beam, tw_ref):
-    vary, targets = ip_orbit_vary_and_targets(beam, tw_ref)
+def match_ip_orbit_with_bb(line, beam, tw_ref):
+    # The van der Meer knobs already hold the correction for the octupoles,
+    # which is kept fixed. The correction for the beam-beam orbit effect is
+    # added on top, scaled by beambeam_scale, so that switching beam-beam off
+    # also removes its correction:
+    # on_[x,y]ip[n]b[beam] = <current value> + on_[x,y]ip[n]b[beam]_bb * beambeam_scale
+    vary, targets = ip_orbit_vary_and_targets(beam, tw_ref, suffix="_bb")
+    for knob_bb in [vv.name for vv in vary.vary_objects]:
+        knob = knob_bb.removesuffix("_bb")
+        line.vars[knob_bb] = 0
+        line.vars[knob] = line.vars[knob]._value + line.vars[knob_bb] * line.vars["beambeam_scale"]
     line.match(vary=vary, targets=targets)
 
 
@@ -407,7 +416,7 @@ def main():
                 )
                 print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
                                   f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) before IP orbit correction:")
-                match_ip_orbit(line, beam, tw_ref[beam])
+                match_ip_orbit_with_bb(line, beam, tw_ref[beam])
                 print_twiss(line, f"Beam{beam} with beam-beam of the correction bunch "
                                   f"(b1={corr_bunch_b1}, b2={corr_bunch_b2}) after IP orbit correction:")
 
