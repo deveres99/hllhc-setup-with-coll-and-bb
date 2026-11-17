@@ -82,8 +82,8 @@ def main():
     ax0.tick_params(axis="both", labelsize=fs - 2)
     ax0.legend(loc="best", fontsize=fs-2)
 
-    ax1.plot(tw.s, (tw_bb.x/b_size_bb.sigma_x-tw.x/b_size.sigma_x), color='black', linestyle='-', label=r"$x$")
-    ax1.plot(tw.s, (tw_bb.y/b_size_bb.sigma_y-tw.y/b_size.sigma_y), color='red', linestyle='-', label=r"$y$")
+    ax1.plot(tw.s, (tw_bb.x-tw.x)/b_size.sigma_x, color='black', linestyle='-', label=r"$x$")
+    ax1.plot(tw.s, (tw_bb.y-tw.y)/b_size.sigma_y, color='red', linestyle='-', label=r"$y$")
     for i in [1, 2, 5, 8]:
         ax1.axvline(tw.s[tw.name == f"ip{i}"], color='blue', linestyle='--')
     ax1.set_xlabel(r"$s$ [m]", fontsize=fs)
